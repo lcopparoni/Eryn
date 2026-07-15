@@ -271,7 +271,7 @@ class ProbDistContainer:
                     elif isinstance(inds[i], int):
                         assert not self.has_strings
                         self.has_ints = True
-                        inds_tmp.append(i)
+                        inds_tmp.append(inds[i])
 
                     else:
                         raise ValueError("Index in tuple must be int or str and all be the same type.")
