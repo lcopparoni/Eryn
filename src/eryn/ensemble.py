@@ -616,7 +616,6 @@ class EnsembleSampler(object):
                     raise ValueError(
                         "Configuration of moves has changed. Cannot use the same backend. Declare a new backend and start from the previous state. If you would prefer not to track move acceptance fraction, set track_moves to False in the EnsembleSampler."
                     )
-
             if self.key_order != self.backend.key_order:
                 raise ValueError("Input key order from priors does not match backend.")
             
