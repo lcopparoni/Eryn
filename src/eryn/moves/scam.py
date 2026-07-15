@@ -5,7 +5,7 @@ import numpy as np
 from eryn.moves.mh import MHMove
 import copy
 
-__all__ = ["GaussianMove", "FisherMove"]
+__all__ = ["SCAMMove", "FisherMove"]
 
 
 def ensure_sphere_boundary(costheta, phi):
@@ -125,7 +125,7 @@ class SCAMMove(MHMove):
         # absolute value variable
         self.abs_value = abs_value
         self.scale_temperature = scale_temperature
-        super(GaussianMove, self).__init__(**kwargs)
+        super(SCAMMove, self).__init__(**kwargs)
         # the definition of the temperature scaled fisher requires the temperature control to be defined
 
 
