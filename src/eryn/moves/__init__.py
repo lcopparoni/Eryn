@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+ -*- coding: utf-8 -*-
 
 # from .de import DEMove
 # from .de_snooker import DESnookerMove
@@ -25,6 +25,11 @@ from .mtdistgen import MTDistGenMove
 from .mtdistgenrj import MTDistGenMoveRJ
 from .multipletry import MultipleTryMove
 
+# additional moves
+from .mala import MALAMove
+from .DE import DEMove
+from .DESnooker import DESnookerMove
+from .scam import SCAMMove
 __all__ = [
     "Move",
     "MHMove",
@@ -39,4 +44,7 @@ __all__ = [
     "GroupMove",
     "GroupStretchMove",
     "CombineMove",
+    "SCAMMove",
+    "DEMove",
+    "DESnooker"
 ]
