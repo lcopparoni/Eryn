@@ -243,6 +243,7 @@ class EnsembleSampler(object):
         num_repeats_in_model=1,
         num_repeats_rj=1,
         track_moves=True,
+        vectorization_safe = False,
         info={},
     ):
         # store priors
@@ -260,6 +261,7 @@ class EnsembleSampler(object):
         self.pool = pool
         self.vectorize = vectorize
         self.blobs_dtype = blobs_dtype
+        self.vectorization_safe = vectorization_safe and vectorize # allow for non 
 
         # turn things into lists/dicts if needed
         if branch_names is not None:
@@ -1279,7 +1281,7 @@ class EnsembleSampler(object):
         inds_bad = np.where(np.isinf(logp))
         for key in inds_copy:
             inds_copy[key][inds_bad] = False
-
+    
             # if inds_keep in branch supps, indicate which to not keep
             if (
                 branch_supps is not None
@@ -1330,7 +1332,11 @@ class EnsembleSampler(object):
             nwalkers_all = ntemps * nwalkers
 
             # fill x_values properly into dictionary
-            x_in[name] = coords_i[inds_copy[name]]
+            if not self.vectorization_safe:
+                x_in[name] = coords_i[inds_copy[name]]
+            else:
+                x_in[name] = coords_i[inds[name]]
+                x_in[name][~inds_copy[name].flatten()] = coords_i[inds_copy[name]][0]
 
             # prepare branch supplementals for each branch
             if self.provide_supplemental:
@@ -1338,7 +1344,10 @@ class EnsembleSampler(object):
                     if branch_supps[name] is not None:
                         # index the branch supps
                         # it will carry in a dictionary of information
-                        branch_supps_in[name] = branch_supps[name][inds_copy[name]]
+                        if not self.vectorization_safe:
+                            branch_supps_in[name] = branch_supps[name][inds_copy[name]]
+                        else:
+                            branch_supps_in[name] = branch_supps[name]
                     else:
                         # fill with None if this branch does not have a supplemental
                         branch_supps_in[name] = None
@@ -1402,7 +1411,11 @@ class EnsembleSampler(object):
             args_and_kwargs = (args_in, kwargs_in)
 
             # get vectorized results
-            results = self.log_like_fn(args_and_kwargs)
+            if self.vectorization_safe:
+                inds_tmp = inds_copy[list(coords.keys())[0]][:,:,0].flatten()
+                results = self.log_like_fn(args_and_kwargs)[inds_tmp]
+            else:
+                results = self.log_like_fn(args_and_kwargs)
 
         # each Likelihood is computed individually
         else:
