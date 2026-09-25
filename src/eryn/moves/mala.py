@@ -1,11 +1,15 @@
 # -*- coding: utf-8 -*-
 import numpy as np
+
+from copy import deepcopy
+from eryn.state import State
+
+from eryn.moves.move import Move
 from scipy.linalg import cholesky
-from eryn.moves.mh import MHMove
 
 __all__ = ["MALAMove"]
 
-class MALAMove(MHMove):
+class MALAMove(Move):
     def __init__(
         self,
         grad_all,
@@ -23,6 +27,7 @@ class MALAMove(MHMove):
         self.constant_metric = constant_metric
         self.indices = dict()
         self.vectorized = vectorized  # FIX: was missing
+        self.alpha = np.array([])
 
         names = list(grad_all.keys())
         for name in names:
@@ -36,6 +41,17 @@ class MALAMove(MHMove):
                 self.L[name] = cholesky((metric[name] + metric[name].T) / 2, lower=True)
 
         super().__init__(**kwargs)
+
+    def setup(self, branches_coords):
+        """Any setup for the proposal.
+
+        Args:
+            branches_coords (dict): Keys are ``branch_names``. Values are
+                np.ndarray[ntemps, nwalkers, nleaves_max, ndim]. These are the curent
+                coordinates for all the walkers.
+
+        """
+
 
     def _log_proposal_pdf(self, x, mu, epsilon, L):
         """Log pdf of MALA proposal: N(mu + gradU, epsilon^2 * M)"""
@@ -90,21 +106,20 @@ class MALAMove(MHMove):
             coords_active = coords[inds_here][:, idx]  # (n_active, ndim_subset)
 
             if self.constant_metric:
-                gradU = 0.5 * eps**2 * gradients[:, idx] @ M.T
+
+                gradU = 0.5 * eps**2 *  gradients @ M.T
                 noise = eps * random.randn(*coords_active.shape) @ L.T
+
             else:
-                gradU = 0.5 * eps**2 * np.einsum('bi,bij->bj', gradients[:, idx], metrics)
+                gradU = 0.5 * eps**2 * np.einsum('bi,bij->bj', gradients, metrics)
                 # per-sample cholesky
-                L_arr = []
-                for m in metrics:
-                    #print(m)
-                    L_arr.append(cholesky((m + m.T) / 2, lower=True))
+                L_arr = [cholesky((m + m.T) / 2, lower=True) for m in metrics]
                 L_arr = np.asarray(L_arr)
                 #L_arr = np.array([cholesky((m + m.T) / 2, lower=True) for m in metrics])
                 z = random.randn(*coords_active.shape)
                 noise = eps * np.einsum('bij,bj->bi', L_arr, z)
 
-            y_active = coords_active + gradU + noise# Instead of:
+            y_active = coords_active + gradU + noise
 
             # Do:
             active = new_coords[inds_here]
@@ -120,12 +135,13 @@ class MALAMove(MHMove):
                 fishers_y = np.array([t[1] for t in tmp])
 
             if self.constant_metric:
-                gradU_y = 0.5 * eps**2 * M @ gradients_y[:, idx]
+                gradU_y = 0.5 * eps**2 * gradients_y@  M.T
+
                 L_y = L
             else:
                 metrics_y = np.linalg.inv(fishers_y)
                 metrics_y = (metrics_y + metrics_y.transpose(0, 2, 1)) / 2
-                gradU_y = 0.5 * eps**2 * np.einsum('bi,bij->bj', gradients_y[:, idx], metrics_y)
+                gradU_y = 0.5 * eps**2 * np.einsum('bi,bij->bj', gradients_y, metrics_y)
                 L_y = np.array([cholesky((m + m.T) / 2, lower=True) for m in metrics_y])
 
             # --- Proposal log weights: log q(x|y) - log q(y|x) ---
@@ -153,3 +169,144 @@ class MALAMove(MHMove):
             q[name][inds_here] = new_coords[inds_here]
 
         return q, factors
+
+    
+    def propose(self, model, state):
+        """Use the move to generate a proposal and compute the acceptance
+
+        Args:
+            model (:class:`eryn.model.Model`): Carrier of sampler information.
+            state (:class:`State`): Current state of the sampler.
+
+        Returns:
+            :class:`State`: State of sampler after proposal is complete.
+
+        """
+
+        self.setup(state.branches_coords)
+
+        # get all branch names for gibbs setup
+        all_branch_names = list(state.branches.keys())
+
+        # get initial shape information
+        ntemps, nwalkers, _, _ = state.branches[all_branch_names[0]].shape
+
+        # in case there are no leaves yet
+        accepted = np.zeros((ntemps, nwalkers), dtype=bool)
+
+        # iterate through gibbs setup
+        for branch_names_run, inds_run in self.gibbs_sampling_setup_iterator(
+            all_branch_names
+        ):
+            # setup supplemental information
+            if not np.all(
+                np.asarray(list(state.branches_supplemental.values())) == None
+            ):
+                new_branch_supps = deepcopy(state.branches_supplemental)
+            else:
+                new_branch_supps = None
+
+            if state.supplemental is not None:
+                new_supps = deepcopy(state.supplemental)
+            else:
+                new_supps = None
+
+            # setup information according to gibbs info
+            (
+                coords_going_for_proposal,
+                inds_going_for_proposal,
+                at_least_one_proposal,
+            ) = self.setup_proposals(
+                branch_names_run, inds_run, state.branches_coords, state.branches_inds
+            )
+
+            # if no walkers are actually being proposed
+            if not at_least_one_proposal:
+                continue
+
+            self.current_model = model
+            self.current_state = state
+
+            # Get the move-specific proposal.
+            q, factors = self.get_proposal(
+                coords_going_for_proposal,
+                model.random,
+                branches_inds=inds_going_for_proposal,
+                supps=new_supps,
+                branch_supps=new_branch_supps,
+            )
+
+            # account for gibbs sampling
+            self.cleanup_proposals_gibbs(
+                branch_names_run, inds_run, q, state.branches_coords
+            )
+
+            # order everything properly
+            q, _, new_branch_supps = self.ensure_ordering(
+                list(state.branches.keys()), q, state.branches_inds, new_branch_supps
+            )
+
+            # if not wrapping with mutliple try (normal route)
+            if not hasattr(self, "mt_ll") or not hasattr(self, "mt_lp"):
+                # Compute prior of the proposed position
+                logp = model.compute_log_prior_fn(q, inds=state.branches_inds)
+
+                self.fix_logp_gibbs(
+                    branch_names_run, inds_run, logp, state.branches_inds
+                )
+
+                # Compute the lnprobs of the proposed position.
+                # Can adjust supplementals in place
+                logl, new_blobs = model.compute_log_like_fn(
+                    q,
+                    inds=state.branches_inds,
+                    logp=logp,
+                    supps=new_supps,
+                    branch_supps=new_branch_supps,
+                )
+
+            else:
+                # if already computed in multiple try
+                logl = self.mt_ll
+                logp = self.mt_lp
+                new_blobs = None
+
+            # get log posterior
+            logP = self.compute_log_posterior(logl, logp)
+
+            # get previous information
+            prev_logl = state.log_like
+
+            prev_logp = state.log_prior
+
+            # takes care of tempering
+            prev_logP = self.compute_log_posterior(prev_logl, prev_logp)
+
+            # difference
+            lnpdiff = factors + logP - prev_logP
+            self.alpha = np.append(self.alpha, lnpdiff[0])
+
+            # draw against acceptance fraction
+            accepted = lnpdiff > np.log(model.random.rand(ntemps, nwalkers))
+
+            # Update the parameters
+            new_state = State(
+                q,
+                log_like=logl,
+                log_prior=logp,
+                blobs=new_blobs,
+                inds=state.branches_inds,
+                supplemental=new_supps,
+                branch_supplemental=new_branch_supps,
+            )
+            state = self.update(state, new_state, accepted)
+
+            # add to move-specific accepted information
+            self.accepted += accepted
+            self.num_proposals += 1
+
+        # temperature swaps
+        if self.temperature_control is not None:
+            state = self.temperature_control.temper_comps(state)
+
+        return state, accepted
