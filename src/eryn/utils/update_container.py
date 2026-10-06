@@ -355,18 +355,19 @@ class AdjustAMProposalScale(object):
                         for p in list(move.all_proposal.keys()):
                             cov_new = self.cov_function(chain[p], rowvar=False)
                             try:
-                                svd = np.linalg.svd(cov_new)
-                                move.all_proposal[p].svd = svd
+                                U, S, V = np.linalg.svd(cov_new)
+                                move.all_proposal[p].svd = (U, S, V)
                                 move.all_proposal[p].scale = cov_new
                             except Exception as e:
                                 print("WARNING: ", e, "unable to update covariance matrix for branch ", p )
                 else:
                     scale = 1./np.sqrt(self.time) * (mean_af - self.target_acceptance)
                     for p in list(move.all_proposal.keys()):
-                        move.all_proposal[p].svd *= np.exp(scale)
+
+                        U, S, v = move.all_proposal[p].svd
+                        S *= np.exp(2*scale)
+                        move.all_proposal[p].svd = (U, S,v)
                         move.all_proposal[p].scale *= np.exp(2*scale)
-
-
 
 
         self.previously_accepted = move.accepted[0].copy()

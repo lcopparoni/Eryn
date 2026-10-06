@@ -307,7 +307,9 @@ class AM_proposal(_isotropic_proposal):
     
     def get_updated_vector(self, rng, x0, betas):
         if self.svd is None:
-            svd = np.linalg.svd(self.scale)
+            U,S,v = np.linalg.svd(self.scale)
+            self.svd = (U,S,v)
+            svd = self.svd
         else:
             svd = self.svd
 
