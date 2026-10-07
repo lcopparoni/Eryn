@@ -47,6 +47,7 @@ class MALARescale(object):
         window=100,
         cov_update=50,
         cov_update_scale=1.1,
+        cov_fn = np.cov,
         verbose=False,
     ):
         self.target_acceptance = target_acceptance
@@ -54,6 +55,7 @@ class MALARescale(object):
         self.cov_update = cov_update
         self.cov_update_scale = cov_update_scale
         self.verbose = verbose
+        self.cov_fn = cov_fn
 
         self.time = 0
         self.last_cov_update = 0
@@ -89,7 +91,7 @@ class MALARescale(object):
             for name in move.grad_function.keys():
                 if name not in chain:
                     continue
-                metric = np.cov(chain[name], rowvar=False)
+                metric = self.cov_fn(chain[name], rowvar=False)
                 move.metric[name] = metric
                 move.L[name] = cholesky((metric + metric.T) / 2, lower=True)
 
