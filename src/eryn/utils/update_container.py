@@ -47,7 +47,7 @@ class MALARescale(object):
         window=100,
         cov_update=50,
         cov_update_scale=1.1,
-        cov_fn = np.cov,
+        cov_function = np.cov,
         verbose=False,
     ):
         self.target_acceptance = target_acceptance
@@ -55,7 +55,7 @@ class MALARescale(object):
         self.cov_update = cov_update
         self.cov_update_scale = cov_update_scale
         self.verbose = verbose
-        self.cov_fn = cov_fn
+        self.cov_fn = cov_function
 
         self.time = 0
         self.last_cov_update = 0
