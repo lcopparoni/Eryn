@@ -87,17 +87,22 @@ class MALAMove(Move):
             new_coords = coords.copy()
 
             # --- Gradients and metric at x ---
-            if self.vectorized:
-                gradients, fishers = self.grad_function[name](coords[inds_here])
-            else:
-                tmp = [self.grad_function[name](c) for c in coords[inds_here]]
-                gradients = np.array([t[0] for t in tmp])
-                fishers = np.array([t[1] for t in tmp])
 
             if self.constant_metric:
+
+                if self.vectorized:
+                    gradients = self.grad_function[name](coords[inds_here])
+                else:
+                    gradients = np.asarray([self.grad_function[name](c) for c in coords[inds_here]])
                 M = self.metric[name]
                 L = self.L[name]
             else:
+                if self.vectorized:
+                    gradients, fishers = self.grad_function[name](coords[inds_here])
+                else:
+                    tmp = [self.grad_function[name](c) for c in coords[inds_here]]
+                    gradients = np.array([t[0] for t in tmp])
+                    fishers = np.array([t[1] for t in tmp])
                 metrics = np.linalg.inv(fishers)
                 # symmetrize
                 metrics = (metrics + metrics.transpose(0, 2, 1)) / 2
@@ -135,10 +140,22 @@ class MALAMove(Move):
                 fishers_y = np.array([t[1] for t in tmp])
 
             if self.constant_metric:
-                gradU_y = 0.5 * eps**2 * gradients_y@  M.T
 
+                if self.vectorized:
+                    gradients_y= self.grad_function[name](new_coords[inds_here])
+                else:
+                    gradients_y = np.array([self.grad_function[name](c) for c in new_coords[inds_here]])
+                gradU_y = 0.5 * eps**2 * gradients_y@  M.T
                 L_y = L
             else:
+                if self.vectorized:
+                    gradients_y, fishers_y = self.grad_function[name](new_coords[inds_here])
+                else:
+                    tmp = [self.grad_function[name](c) for c in new_coords[inds_here]]
+                    gradients_y = np.array([t[0] for t in tmp])
+                    fishers_y = np.array([t[1] for t in tmp])
+
+
                 metrics_y = np.linalg.inv(fishers_y)
                 metrics_y = (metrics_y + metrics_y.transpose(0, 2, 1)) / 2
                 gradU_y = 0.5 * eps**2 * np.einsum('bi,bij->bj', gradients_y, metrics_y)
