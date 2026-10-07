@@ -132,13 +132,6 @@ class MALAMove(Move):
             new_coords[inds_here] = active
             #print(gradU + noise)
             # --- Gradients and metric at y ---
-            if self.vectorized:
-                gradients_y, fishers_y = self.grad_function[name](new_coords[inds_here])
-            else:
-                tmp = [self.grad_function[name](c) for c in new_coords[inds_here]]
-                gradients_y = np.array([t[0] for t in tmp])
-                fishers_y = np.array([t[1] for t in tmp])
-
             if self.constant_metric:
 
                 if self.vectorized:
