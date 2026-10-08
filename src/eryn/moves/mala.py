@@ -123,9 +123,6 @@ class MALAMove(Move):
                 noise = eps * np.einsum('bij,bj->bi', L_arr, z)
 
             y_active = coords_active + gradU + noise
-            # periodic wrap
-            if self.periodic is not None:
-                y_active = self.periodic.wrap({name: y_active})
 
             # Do:
             active = new_coords[inds_here]
