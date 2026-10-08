@@ -111,10 +111,8 @@ class MALAMove(Move):
             coords_active = coords[inds_here][:, idx]  # (n_active, ndim_subset)
 
             if self.constant_metric:
-
                 gradU = 0.5 * eps**2 *  gradients @ M.T
                 noise = eps * random.randn(*coords_active.shape) @ L.T
-
             else:
                 gradU = 0.5 * eps**2 * np.einsum('bi,bij->bj', gradients, metrics)
                 # per-sample cholesky
@@ -125,6 +123,9 @@ class MALAMove(Move):
                 noise = eps * np.einsum('bij,bj->bi', L_arr, z)
 
             y_active = coords_active + gradU + noise
+            # periodic wrap
+            if self.periodic is not None:
+                y_active = self.periodic.wrap({name: y_active})
 
             # Do:
             active = new_coords[inds_here]
