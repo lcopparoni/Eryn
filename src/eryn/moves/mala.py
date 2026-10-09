@@ -114,13 +114,39 @@ class MALAMove(Move):
         """
 
 
-    def _log_proposal_pdf(self, x, mu, epsilon, L):
+    def _get_diff(self, name, x, mu, idx, ndim):
+        """Compute ``x - mu`` accounting for periodic parameters.
+
+        Args:
+            name (str): Branch name.
+            x (np.ndarray): Points, shape ``(n, ndim_subset)``.
+            mu (np.ndarray): Proposal means, shape ``(n, ndim_subset)``.
+            idx (np.ndarray): Dimension indices of the subset in the full
+                parameter space.
+            ndim (int): Full number of dimensions of the branch.
+
+        Returns:
+            np.ndarray: Differences ``x - mu``, shape ``(n, ndim_subset)``.
+
+        """
+        if self.periodic is None:
+            return x - mu
+
+        # periodic indices refer to the full parameter space
+        x_full = np.zeros((x.shape[0], 1, ndim))
+        mu_full = np.zeros((mu.shape[0], 1, ndim))
+        x_full[:, 0, idx] = x
+        mu_full[:, 0, idx] = mu
+
+        diff = self.periodic.distance({name: mu_full}, {name: x_full})[name]
+        return diff[:, 0, idx]
+
+    def _log_proposal_pdf(self, diff, epsilon, L):
         """Log pdf of the MALA proposal ``N(mu, epsilon^2 * L @ L.T)``.
 
         Args:
-            x (np.ndarray): Points at which to evaluate, shape ``(n, ndim)``.
-            mu (np.ndarray): Proposal means (current point plus drift),
-                shape ``(n, ndim)``.
+            diff (np.ndarray): Differences ``x - mu`` between the points at
+                which to evaluate and the proposal means, shape ``(n, ndim)``.
             epsilon (float): Step size.
             L (np.ndarray): Lower Cholesky factor of the metric ``M``,
                 shape ``(ndim, ndim)``.
@@ -129,7 +155,6 @@ class MALAMove(Move):
             np.ndarray: Log proposal density for each point, shape ``(n,)``.
 
         """
-        diff = x - mu  # (n_active, ndim_subset)
         z = np.linalg.solve(L, diff.T)  # (ndim_subset, n_active)
         ndim = L.shape[0]
         log_det = 2.0 * np.sum(np.log(np.diag(L)))
@@ -168,7 +193,6 @@ class MALAMove(Move):
             if self.indices[name] is None:
                 self.indices[name] = np.arange(ndim)
             idx = self.indices[name]
-
 
             if branches_inds is None:
                 inds = np.ones((ntemps, nwalkers, nleaves_max), dtype=bool)
@@ -228,11 +252,16 @@ class MALAMove(Move):
                 noise = eps * np.einsum('bij,bj->bi', L_arr, z)
 
             y_active = coords_active + gradU + noise
-
-            # Do:
             active = new_coords[inds_here]
             active[:, idx] = y_active
             new_coords[inds_here] = active
+
+            if self.periodic is not None:
+                new_coords = self.periodic.wrap(
+                        {name: new_coords.reshape(ntemps * nwalkers, nleaves_max, ndim)}
+                        )[name].reshape(ntemps, nwalkers, nleaves_max, ndim)
+                y_active = new_coords[inds_here][:, idx]
+
             #print(gradU + noise)
             # --- Gradients and metric at y ---
             if self.constant_metric:
@@ -255,23 +284,27 @@ class MALAMove(Move):
                 metrics_y = (metrics_y + metrics_y.transpose(0, 2, 1)) / 2
                 gradU_y = 0.5 * eps**2 * np.einsum('b,bi,bij->bj', betas_calc, gradients_y, metrics_y)
                 L_y = np.array([cholesky((m + m.T) / 2, lower=True) for m in metrics_y])
-
+            
             # --- Proposal log weights: log q(x|y) - log q(y|x) ---
             # mean of forward proposal q(y|x)
             mu_fwd = coords_active + gradU           # (n_active, ndim_subset)
             # mean of reverse proposal q(x|y)
             mu_rev = y_active + gradU_y              # (n_active, ndim_subset)
 
+            # periodic-aware differences
+            diff_fwd = self._get_diff(name, y_active, mu_fwd, idx, ndim)
+            diff_rev = self._get_diff(name, coords_active, mu_rev, idx, ndim)
+
             if self.constant_metric:
-                log_q_fwd = self._log_proposal_pdf(y_active, mu_fwd, eps, L)
-                log_q_rev = self._log_proposal_pdf(coords_active, mu_rev, eps, L_y)
+                log_q_fwd = self._log_proposal_pdf(diff_fwd, eps, L)
+                log_q_rev = self._log_proposal_pdf(diff_rev, eps, L_y)
             else:
                 log_q_fwd = np.array([
-                    self._log_proposal_pdf(y_active[i:i+1], mu_fwd[i:i+1], eps, L_arr[i])
+                    self._log_proposal_pdf(diff_fwd[i:i+1], eps, L_arr[i])
                     for i in range(len(y_active))
                 ]).squeeze()
                 log_q_rev = np.array([
-                    self._log_proposal_pdf(coords_active[i:i+1], mu_rev[i:i+1], eps, L_y[i])
+                    self._log_proposal_pdf(diff_rev[i:i+1], eps, L_y[i])
                     for i in range(len(y_active))
                 ]).squeeze()
 

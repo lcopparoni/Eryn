@@ -214,8 +214,9 @@ class SCAMMove(MHMove):
         if self.periodic is not None:
             for name, tmp in q.items():
                 ntemps, nwalkers, nleaves_max, ndim = tmp.shape
-                q[name] = self.periodic.wrap({name: tmp.reshape(ntemps * nwalkers, nleaves_max, ndim)})
-                q[name] = tmp.reshape(ntemps, nwalkers, nleaves_max, ndim)
+                q[name] = self.periodic.wrap(
+                        {name: tmp.reshape(ntemps * nwalkers, nleaves_max, ndim)}
+                        )[name].reshape(ntemps, nwalkers, nleaves_max, ndim)
 
         return q, np.zeros((ntemps, nwalkers))
 
