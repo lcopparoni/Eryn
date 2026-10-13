@@ -206,8 +206,7 @@ class MALAMove(Move):
                 betas_tmp = copy.copy(self.temperature_control.betas)
                 if betas_tmp[-1] == 0.0:
                     betas_tmp[-1] = betas_tmp[-2]
-                #breakpoint()
-                betas = betas *betas_tmp
+                betas = betas * betas_tmp[:, None, None]
             betas_calc = betas[inds_here]
 
 

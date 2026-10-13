@@ -354,22 +354,22 @@ class AdjustAMProposalScale(object):
             if not np.isnan(mean_af):
                 if self.recompute_cov:
                     if mean_af > self.target_acceptance:
-                        for p in list(move.all_proposal.keys()):
+                        for p in list(move.cov.keys()):
                             cov_new = self.cov_function(chain[p], rowvar=False)
                             try:
                                 U, S, V = np.linalg.svd(cov_new)
-                                move.all_proposal[p].svd = (U, S, V)
-                                move.all_proposal[p].scale = cov_new
+                                move.svd[p] = (U, S, V)
+                                move.cov[p] = cov_new
                             except Exception as e:
                                 print("WARNING: ", e, "unable to update covariance matrix for branch ", p )
                 else:
                     scale = 1./np.sqrt(self.time) * (mean_af - self.target_acceptance)
-                    for p in list(move.all_proposal.keys()):
+                    for p in list(move.cov.keys()):
 
-                        U, S, v = move.all_proposal[p].svd
+                        U, S, v = move.svd[p]
                         S *= np.exp(2*scale)
-                        move.all_proposal[p].svd = (U, S,v)
-                        move.all_proposal[p].scale *= np.exp(2*scale)
+                        move.svd[p] = (U, S,v)
+                        move.cov[p] *= np.exp(2*scale)
 
 
         self.previously_accepted = move.accepted[0].copy()
@@ -377,13 +377,12 @@ class AdjustAMProposalScale(object):
         self.time += 1
 
     def get_state(self, move):
-        return {p: move.all_proposal[p].scale for p in move.all_proposal.keys()}
+        return {p: move.cov[p] for p in move.cov.keys()}
 
     def set_state(self, move, state):
         for p, cov in state.items():
-            svd = np.linalg.svd(cov)
-            move.all_proposal[p].scale = cov
-            move.all_proposal[p].svd = svd
+            move.cov[p] = cov
+            move.svd[p] = np.linalg.svd(cov)
 
 
 @register_adapter("StretchMove")
