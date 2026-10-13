@@ -352,17 +352,17 @@ class AdjustAMProposalScale(object):
             if np.isnan(mean_af):
                 mean_af = 0.0
             if not np.isnan(mean_af):
-                if self.recompute_cov:
-                    if mean_af > self.target_acceptance:
-                        for p in list(move.cov.keys()):
-                            cov_new = self.cov_function(chain[p], rowvar=False)
-                            try:
-                                U, S, V = np.linalg.svd(cov_new)
-                                move.svd[p] = (U, S, V)
-                                move.cov[p] = cov_new
-                            except Exception as e:
-                                print("WARNING: ", e, "unable to update covariance matrix for branch ", p )
+                if self.recompute_cov and mean_af > self.target_acceptance:
+                    for p in list(move.cov.keys()):
+                        cov_new = self.cov_function(chain[p], rowvar=False)
+                        try:
+                            U, S, V = np.linalg.svd(cov_new)
+                            move.svd[p] = (U, S, V)
+                            move.cov[p] = cov_new
+                        except Exception as e:
+                            print("WARNING: ", e, "unable to update covariance matrix for branch ", p )
                 else:
+                    # below target (or covariance frozen): Robbins-Monro rescaling
                     scale = 1./np.sqrt(self.time) * (mean_af - self.target_acceptance)
                     for p in list(move.cov.keys()):
 
