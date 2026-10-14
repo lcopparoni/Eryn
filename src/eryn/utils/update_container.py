@@ -209,34 +209,37 @@ class DERescale(object):
                 (move.accepted[0] - self.previously_accepted)
                 / (move.num_proposals - self.previous_iter)
                 )
+            # one multiplicative step shared by all branches, so that
+            # self.scale tracks the actual gamma multiplier
+            step = 1.0
             if np.isnan(mean_af):
                 pass
             elif mean_af > 0.31:
-                if self.scale < 2.0 :
-                    for key in move.gamma0.keys():
-                        self.scale *= 1.1
-                        move.gamma0[key] *= 1.1
+                if self.scale < 2.0:
+                    step = 1.1
             elif mean_af < 0.2:
                 if self.scale > 0.20:
-                    for key in move.gamma0.keys():
-                        self.scale *= 0.9
-                        move.gamma0[key] *= 0.9
+                    step = 0.9
             else:
-                for key in move.gamma0.keys():
-                    self.scale *= np.sqrt(mean_af / self.target_acceptance)
-                    move.gamma0[key] *= np.sqrt(mean_af / self.target_acceptance)
+                step = np.sqrt(mean_af / self.target_acceptance)
+            self.scale *= step
+            for key in move.gamma0.keys():
+                move.gamma0[key] *= step
         self.previously_accepted = move.accepted[0].copy()
         self.previous_iter = move.num_proposals
         self.time += 1
 
     def get_state(self, move):
-        return {"scale": self.scale}
+        return {"scale": self.scale, "gamma0": dict(move.gamma0)}
 
     def set_state(self, move, state):
-        scale = state["scale"]
-        for key in move.gamma0.keys():
-            move.gamma0[key] *= scale
-        self.scale = scale
+        if "gamma0" in state:
+            move.gamma0.update(state["gamma0"])
+        else:
+            # old dumps: only the multiplier is stored
+            for key in move.gamma0.keys():
+                move.gamma0[key] *= state["scale"]
+        self.scale = state["scale"]
 
 
 @register_adapter("DESnookerMove")
@@ -247,19 +250,22 @@ class DESnookerRescale(object):
 
     def __init__(
             self,
-            target_acceptance = 0.234,
+            target_acceptance = 0.30,
             verbose=False,
             cov_function = dict(),# only updates when cov function is given
             update_scales = dict()
 
             ):
 
-        """Adjusted scale for Fisher proposal based on cold chain acceptance rate,
-        if the method is provided  can also recompute the fisher
+        """Adjust gamma of the DE snooker move based on the cold chain acceptance rate.
+
+        Every 5 updates, the per-parameter ``move.scale`` of the branches listed in
+        ``update_scales`` is refreshed with the standard deviations of the chain,
+        computed with ``cov_function[branch]`` (default ``np.cov``).
 
         """
         self.target_acceptance = target_acceptance
-        self.update_scales = update_scales
+        self.update_scales = dict(update_scales)
         self.cov_function = dict()
         for key in self.update_scales.keys():
             self.cov_function[key] = cov_function.get(key,np.cov)
@@ -279,27 +285,28 @@ class DESnookerRescale(object):
                 (move.accepted[0] - self.previously_accepted)
                 / (move.num_proposals - self.previous_iter)
                 )
+            # one multiplicative step shared by all branches, so that
+            # self.scale tracks the actual gamma multiplier
+            step = 1.0
             if np.isnan(mean_af):
                 pass
             elif mean_af > 0.31:
                 if self.scale < 2.0:
-                    for key in move.gamma0.keys():
-                        self.scale *= 1.1
-                        move.gamma0[key] *= 1.1
+                    step = 1.1
             elif mean_af < 0.2:
                 if self.scale > 0.20:
-                    for key in move.gamma0.keys():
-                        self.scale *= 0.9
-                        move.gamma0[key] *= 0.9
+                    step = 0.9
             else:
-                for key in move.gamma0.keys():
-                    self.scale *= np.sqrt(mean_af / self.target_acceptance)
-                    move.gamma0[key] *= np.sqrt(mean_af / self.target_acceptance)
+                step = np.sqrt(mean_af / self.target_acceptance)
+            self.scale *= step
+            for key in move.gamma0.keys():
+                move.gamma0[key] *= step
 
 
             if self.time % 5 == 0:
-                for key in self.cov_function.keys():
-                    self.update_scales[key] = np.sqrt(np.diag(self.cov_function(chain[key], rowvar = False)))
+                for key, cov_function in self.cov_function.items():
+                    self.update_scales[key] = np.sqrt(np.diag(cov_function(chain[key], rowvar = False)))
+                    move.scale[key] = self.update_scales[key]
 
 
         self.previously_accepted = move.accepted[0].copy()
@@ -307,13 +314,20 @@ class DESnookerRescale(object):
         self.time += 1
 
     def get_state(self, move):
-        return {"scale": self.scale}
+        return {"scale": self.scale, "gamma0": dict(move.gamma0), "move_scale": dict(move.scale)}
 
     def set_state(self, move, state):
-        scale = state["scale"]
-        for key in move.gamma0.keys():
-            move.gamma0[key] *= scale
-        self.scale = scale
+        if "gamma0" in state:
+            move.gamma0.update(state["gamma0"])
+        else:
+            # old dumps: only the multiplier is stored
+            for key in move.gamma0.keys():
+                move.gamma0[key] *= state["scale"]
+        if "move_scale" in state:
+            move.scale.update(state["move_scale"])
+            for key in self.update_scales.keys():
+                self.update_scales[key] = move.scale[key]
+        self.scale = state["scale"]
 
 
 @register_adapter("SCAMMove")
