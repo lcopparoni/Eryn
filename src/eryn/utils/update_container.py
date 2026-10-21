@@ -101,11 +101,21 @@ class MALARescale(object):
         self.time += 1
 
     def get_state(self, move):
-        return {"epsilon": dict(move.epsilon), "last_cov_update": self.last_cov_update}
+        state = {"epsilon": dict(move.epsilon)}
+        # the fixed metric is adapted from the chain, store it to resume
+        if move.constant_metric:
+            state["metric"] = {name: np.asarray(m) for name, m in move.metric.items()}
+        return state
 
     def set_state(self, move, state):
         move.epsilon.update(state["epsilon"])
-        self.last_cov_update = state["last_cov_update"]
+        # move.num_proposals restarts at 0 on resume, so the counter must too
+        self.last_cov_update = 0
+        if move.constant_metric:
+            # .get keeps older move files (without metric) loadable
+            for name, metric in state.get("metric", {}).items():
+                move.metric[name] = metric
+                move.L[name] = cholesky((metric + metric.T) / 2, lower=True)
 
 
 @register_adapter("FisherMove")

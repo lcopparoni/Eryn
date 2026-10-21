@@ -56,6 +56,22 @@ class MALAMove(Move):
             the inverse temperature ``beta`` of each chain so tempered chains
             target ``pi^beta``. A chain with ``beta = 0`` uses the previous
             chain's ``beta``. (default: ``True``)
+        cold_only (bool, optional): If ``True``, only the cold chain
+            (temperature index 0) is proposed with MALA. Gradients are
+            evaluated only on the cold walkers. The tempered chains are
+            proposed with ``tempered_move`` if given; otherwise they are left
+            unchanged and never counted as accepted. (default: ``False``)
+        cold_only_full_like (bool, optional): Only used if ``cold_only``.
+            If ``True``, the prior and likelihood are still evaluated for all
+            temperatures (the tempered walkers at their current position), so
+            the likelihood batch shape is unchanged. If ``False``, they are
+            evaluated for the cold chain only. Ignored (always ``True``) if
+            ``tempered_move`` is given. (default: ``True``)
+        tempered_move (:class:`eryn.moves.SCAMMove`, optional): Only used if
+            ``cold_only``. Move used to propose the tempered chains
+            (temperature index ``>= 1``). Its proposal is symmetric, so it
+            adds no proposal factor. The ``temperature_control`` and
+            ``periodic`` of this move are passed to it. (default: ``None``)
         **kwargs (dict, optional): Kwargs for the parent :class:`Move` class.
             (default: ``{}``)
 
@@ -78,8 +94,14 @@ class MALAMove(Move):
         vectorized=False,
         indices=dict(),
         scale_temperature = True,# samples the correct p^1/T posterior
+        cold_only=False,
+        cold_only_full_like=True,
+        tempered_move=None,
         **kwargs,
     ):
+        self.cold_only = cold_only
+        self.cold_only_full_like = cold_only_full_like
+        self.tempered_move = tempered_move
         self.epsilon = dict()
         self.grad_function = dict()
         self.metric = dict()
@@ -185,6 +207,7 @@ class MALAMove(Move):
         first_name = list(branches_coords.keys())[0]
         ntemps, nwalkers, _, _ = branches_coords[first_name].shape
         factors = np.zeros((ntemps, nwalkers), dtype=np.float64)
+        tempered_inds_all = {}
 
         for name, coords in branches_coords.items():
             ntemps, nwalkers, nleaves_max, ndim = coords.shape
@@ -198,6 +221,14 @@ class MALAMove(Move):
                 inds = np.ones((ntemps, nwalkers, nleaves_max), dtype=bool)
             else:
                 inds = branches_inds[name]
+
+            if self.cold_only:
+                # tempered chains are left to tempered_move (or stay where they are)
+                inds = inds.copy()
+                tempered_inds = inds.copy()
+                tempered_inds[0] = False
+                tempered_inds_all[name] = tempered_inds
+                inds[1:] = False
 
             inds_here = np.where(inds)
             betas = np.ones((ntemps, nwalkers, nleaves_max))
@@ -237,7 +268,6 @@ class MALAMove(Move):
 
             # --- Proposal x -> y ---
             coords_active = coords[inds_here][:, idx]  # (n_active, ndim_subset)
-
             if self.constant_metric:
                 gradU = 0.5 * eps**2 * betas_calc[:, None] * gradients @ M.T
                 noise = eps * random.randn(*coords_active.shape) @ L.T
@@ -264,7 +294,6 @@ class MALAMove(Move):
             #print(gradU + noise)
             # --- Gradients and metric at y ---
             if self.constant_metric:
-
                 if self.vectorized:
                     gradients_y= self.grad_function[name](new_coords[inds_here])
                 else:
@@ -311,6 +340,17 @@ class MALAMove(Move):
             factors[inds_here[:2]] += log_q_rev - log_q_fwd
 
             q[name][inds_here] = new_coords[inds_here]
+
+        # --- Tempered chains: SCAM proposal ---
+        if self.cold_only and self.tempered_move is not None and ntemps > 1:
+            self.tempered_move.temperature_control = self.temperature_control
+            self.tempered_move.periodic = self.periodic
+            q_t, factors_t = self.tempered_move.get_proposal(
+                branches_coords, random, branches_inds=tempered_inds_all
+            )
+            for name in q:
+                q[name][1:] = q_t[name][1:]
+            factors += factors_t
 
         return q, factors
 
@@ -393,7 +433,45 @@ class MALAMove(Move):
             )
 
             # if not wrapping with mutliple try (normal route)
-            if not hasattr(self, "mt_ll") or not hasattr(self, "mt_lp"):
+            if (not hasattr(self, "mt_ll") or not hasattr(self, "mt_lp")) and (
+                self.cold_only
+                and not self.cold_only_full_like
+                and self.tempered_move is None
+            ):
+                # prior and likelihood of the cold chain only, the tempered
+                # chains keep their current values
+                q_cold = {n: v[:1] for n, v in q.items()}
+                inds_cold = {n: v[:1] for n, v in state.branches_inds.items()}
+                supps_cold = new_supps[:1] if new_supps is not None else None
+                branch_supps_cold = (
+                    {n: (v[:1] if v is not None else None) for n, v in new_branch_supps.items()}
+                    if new_branch_supps is not None
+                    else None
+                )
+
+                logp = state.log_prior.copy()
+                logp[:1] = model.compute_log_prior_fn(q_cold, inds=inds_cold)
+
+                self.fix_logp_gibbs(
+                    branch_names_run, inds_run, logp, state.branches_inds
+                )
+
+                logl = state.log_like.copy()
+                logl_cold, blobs_cold = model.compute_log_like_fn(
+                    q_cold,
+                    inds=inds_cold,
+                    logp=logp[:1],
+                    supps=supps_cold,
+                    branch_supps=branch_supps_cold,
+                )
+                logl[:1] = logl_cold
+                if blobs_cold is not None:
+                    new_blobs = state.blobs.copy()
+                    new_blobs[:1] = blobs_cold
+                else:
+                    new_blobs = None
+
+            elif not hasattr(self, "mt_ll") or not hasattr(self, "mt_lp"):
                 # Compute prior of the proposed position
                 logp = model.compute_log_prior_fn(q, inds=state.branches_inds)
 
@@ -434,6 +512,8 @@ class MALAMove(Move):
 
             # draw against acceptance fraction
             accepted = lnpdiff > np.log(model.random.rand(ntemps, nwalkers))
+            if self.cold_only and self.tempered_move is None:
+                accepted[1:] = False
 
             # Update the parameters
             new_state = State(
