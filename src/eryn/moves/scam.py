@@ -50,9 +50,11 @@ class SCAMMove(MHMove):
 
     .. math::
 
-        \\delta y_j = f \\, \\sqrt{S_j} \\, \\frac{2.38}{\\sqrt{n_{dim} \\beta}} \\, z,
-        \\quad z \\sim \\mathcal{N}(0, 1),
+        \\delta y_j = f \\, \\sqrt{S_j} \\, \\frac{2.38}{\\sqrt{n_{moved} \\beta}} \\, z_j,
+        \\quad z_j \\sim \\mathcal{N}(0, 1),
 
+    with ``z_j`` drawn independently for each moved direction and
+    ``n_moved`` the number of directions moved (``ndim`` for AM, 1 for SCAM),
     where ``f`` is the optional random ``factor`` and ``beta`` the inverse
     temperature (if ``scale_temperature`` is ``True``). The proposal is
     symmetric, so the proposal factors are zero.
@@ -161,9 +163,11 @@ class SCAMMove(MHMove):
             # move along all of them AM
             rand_j = np.arange(nd)
 
+        # independent draw per moved direction, scaled to the number moved
+        n_moved = len(rand_j)
         y[:, rand_j] += (
-            scale * rng.normal(size=nw)[:, None] * np.sqrt(S[None, rand_j])
-            * 2.38 / np.sqrt(nd * betas[:, None])
+            scale * rng.normal(size=(nw, n_moved)) * np.sqrt(S[None, rand_j])
+            * 2.38 / np.sqrt(n_moved * betas[:, None])
         )
 
         # go back to the original basis
